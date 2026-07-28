@@ -1,0 +1,21 @@
+# Render Blueprint — Bears calibration inbox (receiver-only)
+# Service NAME = bears-inbox  (deliberately NOT vanguard-shield; this is Bears infra).
+# Persistent disk keeps the append store across restarts/redeploys.
+services:
+  - type: web
+    name: bears-inbox
+    runtime: python
+    plan: starter            # Starter ($7/mo) required for a persistent disk + always-on.
+    autoDeploy: false
+    buildCommand: ""         # stdlib only, no build step
+    startCommand: python ironhalo_receiver.py serve
+    healthCheckPath: /health
+    envVars:
+      - key: IRONHALO_FEED_KEY      # the shared secret — set out-of-band, never in repo/prompt
+        sync: false
+      - key: IRONHALO_INBOX_STORE
+        value: /var/data/ironhalo_inbox.jsonl
+    disk:
+      name: inbox-store
+      mountPath: /var/data
+      sizeGB: 1

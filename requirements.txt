@@ -1,0 +1,2 @@
+# No third-party dependencies — receiver uses only the Python standard library.
+# (Kept intentionally empty so the Render build is trivial and the attack surface is minimal.)

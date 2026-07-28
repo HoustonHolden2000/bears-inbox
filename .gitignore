@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+# runtime data + local-only artifacts (never commit received packets or local key setters)
+ironhalo_inbox.jsonl
+inbox_audit.jsonl
+_selftest_store.jsonl
+_selftest_audit.jsonl
+CLICK_HERE_Set_Ironhalo_Feed_Key.cmd
