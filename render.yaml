@@ -6,12 +6,14 @@ services:
     name: bears-inbox
     runtime: python
     plan: starter            # Starter ($7/mo) required for a persistent disk + always-on.
-    autoDeploy: false
+    autoDeploy: true         # pushes to main now deploy hands-free (was false)
     buildCommand: ""         # stdlib only, no build step
     startCommand: python ironhalo_receiver.py serve
     healthCheckPath: /health
     envVars:
       - key: IRONHALO_FEED_KEY      # the shared secret — set out-of-band, never in repo/prompt
+        sync: false
+      - key: BEARS_READ_KEY         # SEPARATE read key for GET /packets — set out-of-band
         sync: false
       - key: IRONHALO_INBOX_STORE
         value: /var/data/ironhalo_inbox.jsonl

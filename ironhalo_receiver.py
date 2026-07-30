@@ -92,9 +92,18 @@ class Handler(BaseHTTPRequestHandler):
         return  # silence default stderr logging (never log auth headers)
 
     def do_GET(self):
-        # Health only. No packet data is ever served over the network.
-        if self.path.split("?")[0] == "/health":
+        path = self.path.split("?")[0]
+        if path == "/health":
             return self._reply(200, {"ok": True, "service": "bears-inbox", "packets": _count()})
+        # Keyed Bears-side read: pull the store. Gated on a SEPARATE read key (never the
+        # feed key), so the sender cannot read. Disabled (404) until BEARS_READ_KEY is set.
+        if path == "/packets":
+            rk = os.environ.get("BEARS_READ_KEY", "").strip()
+            auth = self.headers.get("Authorization", "")
+            presented = auth[7:].strip() if auth.startswith("Bearer ") else ""
+            if not rk or not presented or not hmac.compare_digest(presented, rk):
+                return self._reply(404, {"ok": False, "error": "not_found"})
+            return self._reply(200, {"ok": True, "count": _count(), "packets": _read_all()})
         return self._reply(404, {"ok": False, "error": "not_found"})
 
     def do_POST(self):
@@ -115,9 +124,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             _audit("reject_400", {"remote": self.client_address[0], "err": str(e)[:120]})
             return self._reply(400, {"ok": False, "error": "bad_json"})
+        pid = str(packet.get("packet_id", "")).strip()
+        if pid and pid in _seen_ids():
+            _audit("dup", {"remote": self.client_address[0], "packet_id": pid[:80]})
+            return self._reply(200, {"ok": True, "dup": True})
         chain = append_packet(packet, remote=self.client_address[0])
         _audit("accept", {"remote": self.client_address[0],
-                          "packet_id": str(packet.get("packet_id", ""))[:80], "chain": chain})
+                          "packet_id": pid[:80], "chain": chain})
         return self._reply(200, {"ok": True})
 
 def _count():
@@ -125,6 +138,24 @@ def _count():
         return 0
     with open(STORE, "r", encoding="utf-8") as f:
         return sum(1 for ln in f if ln.strip())
+
+def _read_all():
+    out = []
+    if os.path.exists(STORE):
+        with open(STORE, "r", encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if ln:
+                    try: out.append(json.loads(ln))
+                    except Exception: pass
+    return out
+
+def _seen_ids():
+    ids = set()
+    for rec in _read_all():
+        pid = str((rec.get("packet") or {}).get("packet_id", "")).strip()
+        if pid: ids.add(pid)
+    return ids
 
 
 def serve(host=None, port=None):
