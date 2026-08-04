@@ -63,7 +63,34 @@ def append_packet(packet, mode="redacted", remote=""):
         rec["_chain"] = hashlib.sha256((prev + body).encode("utf-8")).hexdigest()[:16]
         with open(STORE, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())  # durable-commit: bytes on disk BEFORE any ACK
         return rec["_chain"]
+
+
+def readback_verify(chain, packet_id):
+    """Re-read the store tail and prove the packet is durably on disk.
+    Returns True only if the last entry's chain hash matches AND (when the
+    packet carries an id) the id matches. This is the anti-false-ACK gate:
+    the 200 is earned by what is READ BACK, not by what was attempted."""
+    try:
+        with open(STORE, "r", encoding="utf-8") as f:
+            last = None
+            for line in f:
+                if line.strip():
+                    last = line
+        if not last:
+            return False
+        rec = json.loads(last)
+        if rec.get("_chain") != chain:
+            return False
+        if packet_id:
+            stored_pid = str((rec.get("packet") or {}).get("packet_id", "")).strip()
+            if stored_pid != packet_id:
+                return False
+        return True
+    except Exception:
+        return False
 
 def _audit(event, detail):
     try:
@@ -128,10 +155,21 @@ class Handler(BaseHTTPRequestHandler):
         if pid and pid in _seen_ids():
             _audit("dup", {"remote": self.client_address[0], "packet_id": pid[:80]})
             return self._reply(200, {"ok": True, "dup": True})
-        chain = append_packet(packet, remote=self.client_address[0])
+        try:
+            chain = append_packet(packet, remote=self.client_address[0])
+        except OSError as e:
+            # Datastore failure = NON-2xx. Never ACK what did not durably land.
+            _audit("store_fail_503", {"remote": self.client_address[0],
+                                      "err": str(e)[:120]})
+            return self._reply(503, {"ok": False, "error": "store_unavailable"})
+        if not readback_verify(chain, pid):
+            _audit("readback_fail_500", {"remote": self.client_address[0],
+                                         "packet_id": pid[:80], "chain": chain})
+            return self._reply(500, {"ok": False, "error": "readback_failed"})
         _audit("accept", {"remote": self.client_address[0],
                           "packet_id": pid[:80], "chain": chain})
-        return self._reply(200, {"ok": True})
+        # ACK carries the chain hash: the sender's receipt is proof-of-storage.
+        return self._reply(200, {"ok": True, "chain": chain, "durable": True})
 
 def _count():
     if not os.path.exists(STORE):
