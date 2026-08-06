@@ -131,6 +131,22 @@ class Handler(BaseHTTPRequestHandler):
             if not rk or not presented or not hmac.compare_digest(presented, rk):
                 return self._reply(404, {"ok": False, "error": "not_found"})
             return self._reply(200, {"ok": True, "count": _count(), "packets": _read_all()})
+        if path == "/audit":
+            rk = os.environ.get("BEARS_READ_KEY", "").strip()
+            auth = self.headers.get("Authorization", "")
+            presented = auth[7:].strip() if auth.startswith("Bearer ") else ""
+            if not rk or not presented or not hmac.compare_digest(presented, rk):
+                return self._reply(404, {"ok": False, "error": "not_found"})
+            rows=[]
+            try:
+                if os.path.exists(AUDIT):
+                    with open(AUDIT,"r",encoding="utf-8") as f:
+                        for ln in f:
+                            ln=ln.strip()
+                            if ln: rows.append(json.loads(ln))
+            except Exception as e:
+                return self._reply(500, {"ok": False, "error": str(e)[:120]})
+            return self._reply(200, {"ok": True, "count": len(rows), "audit": rows})
         return self._reply(404, {"ok": False, "error": "not_found"})
 
     def do_POST(self):
